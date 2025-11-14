@@ -366,7 +366,8 @@ module Braintrust
         # Create a wrapper module that intercepts responses.create and responses.stream
         wrapper = Module.new do
           # Wrap non-streaming create method
-          define_method(:create) do |**params|
+          # ruby-openai 8.x uses parameters: keyword arg, while older versions use individual kwargs
+          define_method(:create) do |parameters: nil, **params|
             tracer = tracer_provider.tracer("braintrust")
 
             tracer.in_span("openai.responses.create") do |span|
@@ -376,6 +377,9 @@ module Braintrust
                 "endpoint" => "/v1/responses"
               }
 
+              # Extract actual parameters - ruby-openai 8.x wraps in parameters: key
+              request_params = parameters || params
+
               # Capture request metadata fields
               metadata_fields = %i[
                 model instructions modalities tools parallel_tool_calls
@@ -384,16 +388,16 @@ module Braintrust
               ]
 
               metadata_fields.each do |field|
-                metadata[field.to_s] = params[field] if params.key?(field)
+                metadata[field.to_s] = request_params[field] if request_params.key?(field)
               end
 
               # Set input as JSON
-              if params[:input]
-                span.set_attribute("braintrust.input_json", JSON.generate(params[:input]))
+              if request_params[:input]
+                span.set_attribute("braintrust.input_json", JSON.generate(request_params[:input]))
               end
 
-              # Call the original method
-              response = super(**params)
+              # Call the original method with correct signature
+              response = parameters ? super(parameters: parameters) : super(**params)
 
               # Set output as JSON
               if response.respond_to?(:output) && response.output
@@ -417,7 +421,8 @@ module Braintrust
           end
 
           # Wrap streaming method
-          define_method(:stream) do |**params|
+          # ruby-openai 8.x uses parameters: keyword arg, while older versions use individual kwargs
+          define_method(:stream) do |parameters: nil, **params|
             tracer = tracer_provider.tracer("braintrust")
             aggregated_events = []
             metadata = {
@@ -429,6 +434,9 @@ module Braintrust
             # Start span with proper context
             span = tracer.start_span("openai.responses.create")
 
+            # Extract actual parameters - ruby-openai 8.x wraps in parameters: key
+            request_params = parameters || params
+
             # Capture request metadata fields
             metadata_fields = %i[
               model instructions modalities tools parallel_tool_calls
@@ -437,20 +445,20 @@ module Braintrust
             ]
 
             metadata_fields.each do |field|
-              metadata[field.to_s] = params[field] if params.key?(field)
+              metadata[field.to_s] = request_params[field] if request_params.key?(field)
             end
 
             # Set input as JSON
-            if params[:input]
-              span.set_attribute("braintrust.input_json", JSON.generate(params[:input]))
+            if request_params[:input]
+              span.set_attribute("braintrust.input_json", JSON.generate(request_params[:input]))
             end
 
             # Set initial metadata
             span.set_attribute("braintrust.metadata", JSON.generate(metadata))
 
-            # Call the original stream method with error handling
+            # Call the original stream method with error handling and correct signature
             begin
-              stream = super(**params)
+              stream = parameters ? super(parameters: parameters) : super(**params)
             rescue => e
               # Record exception if stream creation fails
               span.record_exception(e)
